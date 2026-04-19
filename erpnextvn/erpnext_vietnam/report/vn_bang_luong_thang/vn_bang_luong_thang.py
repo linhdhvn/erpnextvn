@@ -47,43 +47,44 @@ def _columns() -> list[dict]:
 
 
 def _get_data(filters: dict[str, Any]) -> list[dict]:
-    conditions = ["ss.docstatus = 1"]
-    params: dict[str, Any] = {}
+    # Build filter conditions using frappe.get_all safe method
+    filter_conditions = [["docstatus", "=", 1]]
 
     if filters.get("company"):
-        conditions.append("ss.company = %(company)s")
-        params["company"] = filters["company"]
+        filter_conditions.append(["Salary Slip", "company", "=", filters["company"]])
 
     if filters.get("month") and filters.get("year"):
-        conditions.append("MONTH(ss.start_date) = %(month)s")
-        conditions.append("YEAR(ss.start_date) = %(year)s")
-        params["month"] = filters["month"]
-        params["year"] = filters["year"]
+        filter_conditions.append(["Salary Slip", "start_date", ">=", f"{filters['year']}-{filters['month']:02d}-01"])
+        # Add upper bound for the month
+        import datetime
+        year = int(filters["year"])
+        month = int(filters["month"])
+        if month == 12:
+            last_day = datetime.date(year + 1, 1, 1) - datetime.timedelta(days=1)
+        else:
+            last_day = datetime.date(year, month + 1, 1) - datetime.timedelta(days=1)
+        filter_conditions.append(["Salary Slip", "start_date", "<=", str(last_day)])
 
     if filters.get("department"):
-        conditions.append("ss.department = %(department)s")
-        params["department"] = filters["department"]
+        filter_conditions.append(["Salary Slip", "department", "=", filters["department"]])
 
-    where = " AND ".join(conditions)
-    rows = frappe.db.sql(
-        f"""
-        SELECT
-            ss.employee, ss.employee_name, ss.department, ss.payment_days,
-            ss.base, ss.gross_pay, ss.net_pay, ss.total_deduction,
-            ss.vn_insurance_employee, ss.vn_pit_amount, ss.vn_taxable_income
-        FROM `tabSalary Slip` ss
-        WHERE {where}
-        ORDER BY ss.department, ss.employee_name
-        """,
-        params,
-        as_dict=True,
+    # Use frappe.get_all for safer queries
+    rows = frappe.get_all(
+        "Salary Slip",
+        filters=filter_conditions,
+        fields=[
+            "name", "employee", "employee_name", "department", "payment_days",
+            "base", "gross_pay", "net_pay", "total_deduction",
+            "vn_insurance_employee", "vn_pit_amount", "vn_taxable_income"
+        ],
+        order_by="department, employee_name"
     )
 
     data: list[dict] = []
     for r in rows:
-        bhxh = _component_total(r.employee, r.name if "name" in r else None, "BHXH (NLĐ 8%)")
-        bhyt = _component_total(r.employee, r.name if "name" in r else None, "BHYT (NLĐ 1.5%)")
-        bhtn = _component_total(r.employee, r.name if "name" in r else None, "BHTN (NLĐ 1%)")
+        bhxh = _component_total(r.employee, r.name, "BHXH (NLĐ 8%)")
+        bhyt = _component_total(r.employee, r.name, "BHYT (NLĐ 1.5%)")
+        bhtn = _component_total(r.employee, r.name, "BHTN (NLĐ 1%)")
 
         data.append(
             {
@@ -110,9 +111,12 @@ def _component_total(employee: str, slip_name: str | None, component: str) -> fl
     """Return the amount of a specific salary component on the latest slip."""
     if not slip_name:
         return 0
-    value = frappe.db.get_value(
+    result = frappe.db.get_value(
         "Salary Detail",
         {"parent": slip_name, "salary_component": component},
         "amount",
     )
-    return value or 0
+    # Handle tuple return from frappe.db.get_value()
+    if result and isinstance(result, tuple):
+        return result[0] or 0
+    return result or 0

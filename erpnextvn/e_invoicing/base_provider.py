@@ -23,6 +23,7 @@ The base class provides:
 
 from __future__ import annotations
 
+import traceback
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -64,7 +65,7 @@ class BaseEInvoiceProvider(ABC):
     sandbox_url: str = ""
 
     def __init__(self) -> None:
-        self.settings = frappe.get_single("VN E Invoice Settings")
+        self.settings = frappe.get_doc("VN E Invoice Settings")
         self.sandbox = bool(self.settings.sandbox_mode)
         self.api_url = self.settings.api_url or (
             self.sandbox_url if self.sandbox else self.production_url
@@ -123,10 +124,15 @@ class BaseEInvoiceProvider(ABC):
         company = frappe.get_doc("Company", si.company)
 
         customer_tax_id = si.tax_id or ""
+        customer = None
         try:
             customer = frappe.get_doc("Customer", si.customer)
-        except Exception:
-            customer = None
+        except frappe.DoesNotExistError:
+            # Customer doesn't exist, proceed with None
+            pass
+        except Exception as e:
+            frappe.log_error(f"Unexpected error loading Customer {si.customer}: {e}")
+            pass
 
         items: list[dict] = []
         for item in si.items:
@@ -188,11 +194,11 @@ class BaseEInvoiceProvider(ABC):
             return ""
         addr = frappe.get_doc("Address", si.company_address)
         parts = [
-            addr.address_line1,
-            addr.address_line2 or "",
-            getattr(addr, "ward", "") or "",
-            getattr(addr, "district", "") or "",
-            addr.city or "",
+            addr.get("address_line1") or "",
+            addr.get("address_line2") or "",
+            addr.get("ward") or "",
+            addr.get("district") or "",
+            addr.get("city") or "",
         ]
         return ", ".join(p for p in parts if p)
 
@@ -218,16 +224,13 @@ class BaseEInvoiceProvider(ABC):
 
         self._log_success(sales_invoice_name, result)
 
-        frappe.db.set_value(
-            "Sales Invoice",
-            sales_invoice_name,
-            {
-                "vn_einvoice_status": "Đã phát hành",
-                "vn_einvoice_number": result.get("invoice_number", ""),
-                "vn_einvoice_lookup_code": result.get("lookup_code", ""),
-                "vn_einvoice_date": result.get("invoice_date", ""),
-            },
-        )
+        # Update using doc.save() instead of frappe.db.set_value()
+        doc = frappe.get_doc("Sales Invoice", sales_invoice_name)
+        doc.vn_einvoice_status = "Đã phát hành"
+        doc.vn_einvoice_number = result.get("invoice_number", "")
+        doc.vn_einvoice_lookup_code = result.get("lookup_code", "")
+        doc.vn_einvoice_date = result.get("invoice_date", "")
+        doc.save(ignore_permissions=True)
         return result
 
     # ------------------------------------------------------------------
@@ -249,8 +252,6 @@ class BaseEInvoiceProvider(ABC):
         ).insert(ignore_permissions=True)
 
     def _log_failure(self, sales_invoice_name: str, status: str) -> None:
-        import traceback
-
         frappe.get_doc(
             {
                 "doctype": "VN E Invoice Log",

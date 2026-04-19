@@ -341,6 +341,22 @@ def add_custom_fields() -> None:
     """Install Vietnam-specific custom fields on core DocTypes."""
     from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
+    # Verify Frappe/ERPNext version compatibility
+    import frappe
+    try:
+        from packaging import version as pkg_version
+        frappe_ver = pkg_version.parse(frappe.__version__)
+        if frappe_ver < pkg_version.parse("15.0"):
+            frappe.log_error(
+                title="ERPNext Vietnam Version Incompatibility",
+                message="ERPNext Vietnam requires Frappe v15.0 or later. "
+                        f"Current version: {frappe.__version__}"
+            )
+            return
+    except Exception:
+        # If version check fails, log but continue anyway
+        pass
+
     create_custom_fields(_custom_field_definitions(), update=True)
 
 

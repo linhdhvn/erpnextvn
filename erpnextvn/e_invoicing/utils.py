@@ -26,6 +26,14 @@ _PROVIDER_MAP = {
     "BKAV": "erpnextvn.e_invoicing.bkav:BKAVProvider",
 }
 
+_PROVIDER_MAP = {
+    "Viettel": "erpnextvn.e_invoicing.viettel:ViettelProvider",
+    "VNPT": "erpnextvn.e_invoicing.vnpt:VNPTProvider",
+    "MISA": "erpnextvn.e_invoicing.misa:MISAProvider",
+    "FPT": "erpnextvn.e_invoicing.fpt:FPTProvider",
+    "BKAV": "erpnextvn.e_invoicing.bkav:BKAVProvider",
+}
+
 
 def get_provider() -> BaseEInvoiceProvider:
     """Return the configured provider instance.
@@ -33,7 +41,7 @@ def get_provider() -> BaseEInvoiceProvider:
     Raises:
         frappe.ValidationError: if no provider is configured.
     """
-    settings = frappe.get_single("VN E Invoice Settings")
+    settings = frappe.get_doc("VN E Invoice Settings")
     path = _PROVIDER_MAP.get(settings.provider)
     if not path:
         frappe.throw(_("Chưa cấu hình nhà cung cấp hóa đơn điện tử"))
@@ -51,7 +59,7 @@ def get_provider() -> BaseEInvoiceProvider:
 
 def on_sales_invoice_submit(doc, method=None) -> None:
     """Auto-send e-invoice on Sales Invoice submit when configured."""
-    settings = frappe.get_single("VN E Invoice Settings")
+    settings = frappe.get_doc("VN E Invoice Settings")
     if not settings.provider or not settings.auto_send_on_submit:
         return
 
@@ -88,7 +96,7 @@ def poll_pending_invoices() -> None:
         "VN E Invoice Log",
         filters={"status": "Pending"},
         fields=["name", "transaction_id", "sales_invoice"],
-        limit=50,
+        limit_page_length=50,
     )
     if not pending:
         return
@@ -109,12 +117,19 @@ def poll_pending_invoices() -> None:
             continue
 
         if result["status"] == "accepted":
-            frappe.db.set_value("VN E Invoice Log", log.name, "status", "Accepted")
-            frappe.db.set_value(
-                "Sales Invoice", log.sales_invoice, "vn_einvoice_status", "Đã phát hành"
-            )
+            # Update using doc.save() for better consistency
+            log_doc = frappe.get_doc("VN E Invoice Log", log.name)
+            log_doc.status = "Accepted"
+            log_doc.save(ignore_permissions=True)
+            
+            # Update the Sales Invoice
+            si_doc = frappe.get_doc("Sales Invoice", log.sales_invoice)
+            si_doc.vn_einvoice_status = "Đã phát hành"
+            si_doc.save(ignore_permissions=True)
         elif result["status"] == "rejected":
-            frappe.db.set_value("VN E Invoice Log", log.name, "status", "Rejected")
+            log_doc = frappe.get_doc("VN E Invoice Log", log.name)
+            log_doc.status = "Rejected"
+            log_doc.save(ignore_permissions=True)
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +143,20 @@ def send_einvoice(sales_invoice: str) -> dict:
 
     Called from the "Phát hành HĐĐT" button on the Sales Invoice form.
     """
+    # Validate document exists
+    if not frappe.db.exists("Sales Invoice", sales_invoice):
+        frappe.throw(_("Hóa đơn {0} không tồn tại").format(sales_invoice))
+    
+    # Check permissions
     if not frappe.has_permission("Sales Invoice", "write", doc=sales_invoice):
         frappe.throw(_("Bạn không có quyền phát hành hóa đơn này"))
+    
+    # Validate it's submitted
+    docstatus = frappe.db.get_value("Sales Invoice", sales_invoice, "docstatus")
+    if isinstance(docstatus, tuple):
+        docstatus = docstatus[0]
+    if docstatus != 1:
+        frappe.throw(_("Chỉ có thể phát hành hóa đơn đã được xác nhận"))
 
     provider = get_provider()
     result = provider.create_and_send(sales_invoice)
@@ -139,19 +166,32 @@ def send_einvoice(sales_invoice: str) -> dict:
 @frappe.whitelist()
 def cancel_einvoice(sales_invoice: str, reason: str) -> dict:
     """Cancel the published e-invoice for a Sales Invoice."""
+    # Validate document exists
+    if not frappe.db.exists("Sales Invoice", sales_invoice):
+        frappe.throw(_("Hóa đơn {0} không tồn tại").format(sales_invoice))
+    
+    # Check permissions
     if not frappe.has_permission("Sales Invoice", "write", doc=sales_invoice):
         frappe.throw(_("Bạn không có quyền hủy hóa đơn này"))
 
     invoice_number = frappe.db.get_value(
         "Sales Invoice", sales_invoice, "vn_einvoice_number"
     )
+    # Handle tuple return from frappe.db.get_value()
+    if isinstance(invoice_number, tuple):
+        invoice_number = invoice_number[0]
+    
     if not invoice_number:
         frappe.throw(_("Hóa đơn chưa có số hóa đơn điện tử"))
 
     provider = get_provider()
     result = provider.cancel(invoice_number, reason)
 
-    frappe.db.set_value("Sales Invoice", sales_invoice, "vn_einvoice_status", "Đã hủy")
+    # Update using doc.save() for consistency
+    doc = frappe.get_doc("Sales Invoice", sales_invoice)
+    doc.vn_einvoice_status = "Đã hủy"
+    doc.save(ignore_permissions=True)
+    
     frappe.get_doc(
         {
             "doctype": "VN E Invoice Log",

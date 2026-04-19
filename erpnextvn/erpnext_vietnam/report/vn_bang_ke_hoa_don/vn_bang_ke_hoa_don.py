@@ -32,48 +32,42 @@ def execute(filters: dict | None = None) -> tuple[list[dict], list[dict]]:
     doctype = "Sales Invoice" if invoice_type == "Sales" else "Purchase Invoice"
     party_field = "customer_name" if invoice_type == "Sales" else "supplier_name"
 
-    conditions = ["inv.docstatus = 1"]
-    params: dict[str, Any] = {}
+    # Build filter conditions using frappe.get_all safe method
+    filter_conditions = [["docstatus", "=", 1]]
     if filters.get("company"):
-        conditions.append("inv.company = %(company)s")
-        params["company"] = filters["company"]
+        filter_conditions.append([doctype, "company", "=", filters["company"]])
     if filters.get("from_date"):
-        conditions.append("inv.posting_date >= %(from_date)s")
-        params["from_date"] = filters["from_date"]
+        filter_conditions.append([doctype, "posting_date", ">=", filters["from_date"]])
     if filters.get("to_date"):
-        conditions.append("inv.posting_date <= %(to_date)s")
-        params["to_date"] = filters["to_date"]
+        filter_conditions.append([doctype, "posting_date", "<=", filters["to_date"]])
 
-    where = " AND ".join(conditions)
-    rows = frappe.db.sql(
-        f"""
-        SELECT inv.name, inv.posting_date, inv.{party_field} AS party,
-               inv.tax_id, inv.net_total, inv.grand_total,
-               inv.total_taxes_and_charges AS tax_amount
-               {', inv.vn_einvoice_number AS einvoice_number' if invoice_type == 'Sales' else ''}
-        FROM `tab{doctype}` inv
-        WHERE {where}
-        ORDER BY inv.posting_date, inv.name
-        """,
-        params,
-        as_dict=True,
+    # Use frappe.get_all for safer, more maintainable queries
+    field_list = ["name", "posting_date", party_field, "tax_id", "net_total", "grand_total", "total_taxes_and_charges"]
+    if invoice_type == "Sales":
+        field_list.append("vn_einvoice_number")
+    
+    rows = frappe.get_all(
+        doctype,
+        filters=filter_conditions,
+        fields=field_list,
+        order_by="posting_date, name"
     )
 
     data: list[dict] = []
     for i, r in enumerate(rows, start=1):
         tax_rate = 0
-        if r.net_total:
-            tax_rate = round((r.tax_amount or 0) / r.net_total * 100, 2)
+        if r.get("net_total"):
+            tax_rate = round((r.get("total_taxes_and_charges") or 0) / r.net_total * 100, 2)
         data.append({
             "idx": i,
             "posting_date": r.posting_date,
-            "invoice_no": r.get("einvoice_number") or r.name,
+            "invoice_no": r.get("vn_einvoice_number") or r.name,
             "series_symbol": "",
-            "party": r.party or "",
+            "party": r.get(party_field) or "",
             "tax_id": r.tax_id or "",
             "net_total": r.net_total or 0,
             "tax_rate": tax_rate,
-            "tax_amount": r.tax_amount or 0,
+            "tax_amount": r.get("total_taxes_and_charges") or 0,
             "grand_total": r.grand_total or 0,
         })
     return columns, data

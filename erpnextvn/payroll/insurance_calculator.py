@@ -73,7 +73,16 @@ def calculate_insurance(
 
     Returns:
         ``InsuranceResult`` with rounded-to-integer VND amounts.
+    
+    Raises:
+        ValueError: if insurance_salary or total_payroll is negative.
     """
+    # Input validation
+    if insurance_salary < 0:
+        raise ValueError("insurance_salary must be non-negative")
+    if total_payroll is not None and total_payroll < 0:
+        raise ValueError("total_payroll must be non-negative")
+    
     settings = _load_settings()
 
     base_salary = settings["base_salary"]

@@ -97,13 +97,16 @@ def create_tax_templates(company: str) -> None:
 def _find_account(company: str, account_number_prefixes: list[str]) -> str | None:
     """Best-effort lookup of an account by number prefix."""
     for prefix in account_number_prefixes:
-        name = frappe.db.get_value(
+        result = frappe.db.get_value(
             "Account",
             {"company": company, "account_number": prefix, "is_group": 0},
             "name",
         )
-        if name:
-            return name
+        # Handle tuple return from frappe.db.get_value()
+        if result:
+            if isinstance(result, tuple):
+                return result[0]
+            return result
     return None
 
 

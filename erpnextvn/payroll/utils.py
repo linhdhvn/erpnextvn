@@ -13,6 +13,11 @@ from __future__ import annotations
 
 from typing import Union
 
+import frappe
+
+from erpnextvn.payroll.insurance_calculator import calculate_insurance
+from erpnextvn.payroll.pit_calculator import calculate_pit
+
 Number = Union[int, float]
 
 
@@ -145,8 +150,6 @@ def validate_salary_slip(doc, method=None) -> None:
     - ``vn_pit_amount`` (Thuế TNCN)
     - ``vn_taxable_income`` (Thu nhập tính thuế)
     """
-    import frappe
-
     if not getattr(doc, "employee", None):
         return
 
@@ -168,10 +171,10 @@ def validate_salary_slip(doc, method=None) -> None:
     if province:
         region = frappe.db.get_value("VN Province", province, "wage_region")
         if region:
+            # Handle tuple return from frappe.db.get_value()
+            if isinstance(region, tuple):
+                region = region[0]
             wage_region = region
-
-    from erpnextvn.payroll.insurance_calculator import calculate_insurance
-    from erpnextvn.payroll.pit_calculator import calculate_pit
 
     insurance = calculate_insurance(insurance_salary, wage_region)
     pit = calculate_pit(

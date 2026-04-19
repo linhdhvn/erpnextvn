@@ -82,6 +82,16 @@ def calculate_pit(
         ``PITResult`` with ``taxable_income``, ``tax_amount``,
         ``effective_rate``, and ``bracket``.
     """
+    # Input validation
+    if gross_income < 0:
+        raise ValueError("gross_income must be non-negative")
+    if insurance_deduction < 0:
+        raise ValueError("insurance_deduction must be non-negative")
+    if num_dependents < 0:
+        raise ValueError("num_dependents must be non-negative")
+    if other_deductions < 0:
+        raise ValueError("other_deductions must be non-negative")
+    
     if personal_deduction is None or dependent_deduction is None:
         personal_deduction, dependent_deduction = _resolve_deductions(
             personal_deduction, dependent_deduction
