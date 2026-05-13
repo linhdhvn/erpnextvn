@@ -89,6 +89,22 @@ regional_overrides = {
 }
 
 # ---------------------------------------------------------------------------
+# Override ERPNext's CoA discovery to include TT99/TT200/TT133
+# ---------------------------------------------------------------------------
+
+override_whitelisted_methods = {
+    "erpnext.accounts.doctype.account.chart_of_accounts.chart_of_accounts.get_charts_for_country": (
+        "erpnextvn.accounting.chart_of_accounts.get_charts_for_country"
+    ),
+}
+
+# Apply CoA monkey-patch on every request and every session boot.
+# `before_request` runs in every worker process before the request handler,
+# guaranteeing the patch is applied before Company.on_update fires.
+before_request = ["erpnextvn.accounting.chart_of_accounts.ensure_patched"]
+boot_session = "erpnextvn.accounting.chart_of_accounts.ensure_patched"
+
+# ---------------------------------------------------------------------------
 # Website / URL rules
 # ---------------------------------------------------------------------------
 
